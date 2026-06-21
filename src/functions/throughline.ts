@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 
 import {
   EMOTION_AXES,
+  WINDOW_KEYS,
   type EmotionVector,
   type EntryAnalysis,
   type EmotionWindow,
@@ -383,30 +384,32 @@ export const getEmotionWindows = createServerFn({ method: "POST" })
       week: weekBucket,
       month: monthBucket,
       quarter: quarterBucket,
+      all: entries, // every entry, no date filter — the whole story
     };
 
-    const stats = {
-      today: averageWindow(buckets.today),
-      week: averageWindow(buckets.week),
-      month: averageWindow(buckets.month),
-      quarter: averageWindow(buckets.quarter),
-    };
+    const stats = {} as Record<WindowKey, ReturnType<typeof averageWindow>>;
+    for (const k of WINDOW_KEYS) stats[k] = averageWindow(buckets[k]);
 
-    // Generate all four warm judgements in one LLM call (grounded in the
+    // Generate all the warm judgements in one LLM call (grounded in the
     // averaged axes plus a couple of real snippets per window).
-    const judgements: Record<WindowKey, string> = {
-      today: fallbackJudgement(stats.today),
-      week: fallbackJudgement(stats.week),
-      month: fallbackJudgement(stats.month),
-      quarter: fallbackJudgement(stats.quarter),
-    };
+    const judgements = {} as Record<WindowKey, string>;
+    for (const k of WINDOW_KEYS) judgements[k] = fallbackJudgement(stats[k]);
 
-    const anyData = (Object.keys(stats) as WindowKey[]).some((k) => stats[k].count > 0);
+    const anyData = WINDOW_KEYS.some((k) => stats[k].count > 0);
+
+    const WINDOW_PROMPT_LABELS: Record<WindowKey, string> = {
+      today: "today",
+      week: "last 7 days",
+      month: "last 30 days",
+      quarter: "last 90 days",
+      all: "all time (every entry)",
+    };
 
     if (anyData && llmConfigured()) {
       try {
-        const summarize = (k: WindowKey, label: string) => {
+        const summarize = (k: WindowKey) => {
           const s = stats[k];
+          const label = WINDOW_PROMPT_LABELS[k];
           if (s.count === 0) return `${label}: no entries.`;
           const axesStr = EMOTION_AXES.map((a) => `${a} ${s.emotions[a].toFixed(2)}`).join(", ");
           const sample = buckets[k]
@@ -419,18 +422,15 @@ export const getEmotionWindows = createServerFn({ method: "POST" })
         };
         const prompt = `For each non-empty time window below, write ONE warm, plain-language sentence (two at most) describing that window's emotional shape, grounded in the averaged axes. You may compare a shorter window to a longer one ("steadier than the month before"). This is a supportive reflection a kind friend might offer — never clinical, never a diagnosis, never a score of the person. If a window shows sustained heaviness, stay caring and you may gently note it could help to talk to someone they trust, without alarm or instructions.
 
-${summarize("today", "today")}
-${summarize("week", "last 7 days")}
-${summarize("month", "last 30 days")}
-${summarize("quarter", "last 90 days")}
+${WINDOW_KEYS.map(summarize).join("\n")}
 
-Return ONLY JSON: {"today": "...", "week": "...", "month": "...", "quarter": "..."}. Use an empty string for any window with no entries.`;
+Return ONLY JSON with these keys: {"today": "...", "week": "...", "month": "...", "quarter": "...", "all": "..."}. Use an empty string for any window with no entries.`;
         const raw = await callLLMJson<Record<string, string>>({
           system: VOICE,
           prompt,
-          maxTokens: 500,
+          maxTokens: 600,
         });
-        for (const k of ["today", "week", "month", "quarter"] as WindowKey[]) {
+        for (const k of WINDOW_KEYS) {
           if (stats[k].count > 0 && typeof raw[k] === "string" && raw[k].trim()) {
             judgements[k] = raw[k].trim();
           } else if (stats[k].count === 0) {
@@ -443,7 +443,7 @@ Return ONLY JSON: {"today": "...", "week": "...", "month": "...", "quarter": "..
     }
 
     const windows = {} as Record<WindowKey, EmotionWindow>;
-    for (const k of ["today", "week", "month", "quarter"] as WindowKey[]) {
+    for (const k of WINDOW_KEYS) {
       windows[k] = {
         emotions: stats[k].emotions,
         valence: stats[k].valence,

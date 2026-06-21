@@ -18,7 +18,7 @@ export type EmotionVector = Record<EmotionAxis, number>;
 
 export type SentimentLabel = "very_low" | "low" | "neutral" | "good" | "great";
 
-export const WINDOW_KEYS = ["today", "week", "month", "quarter"] as const;
+export const WINDOW_KEYS = ["today", "week", "month", "quarter", "all"] as const;
 export type WindowKey = (typeof WINDOW_KEYS)[number];
 
 export const WINDOW_LABELS: Record<WindowKey, string> = {
@@ -26,6 +26,7 @@ export const WINDOW_LABELS: Record<WindowKey, string> = {
   week: "Last week",
   month: "Last month",
   quarter: "Last 3 months",
+  all: "All time",
 };
 
 /** The per-entry analysis returned by the LLM (and echoed to the client). */
@@ -150,6 +151,7 @@ export const WINDOW_COLORS: Record<WindowKey, string> = {
   week: "oklch(0.78 0.12 67)", // warm amber
   month: "oklch(0.68 0.07 200)", // muted teal
   quarter: "oklch(0.6 0.02 260)", // soft grey
+  all: "oklch(0.58 0.08 300)", // soft mauve — the whole story
 };
 
 export interface RadarRow {
@@ -159,6 +161,7 @@ export interface RadarRow {
   week?: number;
   month?: number;
   quarter?: number;
+  all?: number;
 }
 
 const AXIS_LABELS: Record<EmotionAxis, string> = {

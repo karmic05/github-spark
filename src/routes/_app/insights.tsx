@@ -181,9 +181,12 @@ function SpiderWeb({
   windows: Record<WindowKey, { emotions: EmotionVector; count: number; judgement: string }>;
 }) {
   const available = WINDOW_KEYS.filter((k) => windows[k].count > 0);
-  // Default: show week, month, quarter (today is a tap away).
+  // Default: show All time + last month + last week, so the whole history is
+  // reflected (not just recent entries) while keeping a recent-vs-all contrast.
+  // Today and quarter are a tap away.
+  const DEFAULT_ON: WindowKey[] = ["all", "month", "week"];
   const [active, setActive] = useState<Set<WindowKey>>(
-    () => new Set(available.filter((k) => k !== "today")),
+    () => new Set(available.filter((k) => DEFAULT_ON.includes(k))),
   );
 
   const shown = WINDOW_KEYS.filter((k) => available.includes(k) && active.has(k));
