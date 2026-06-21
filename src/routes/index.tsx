@@ -2,6 +2,7 @@ import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useRef, useState } from "react";
 import { PenLine, Radar, Sparkles } from "lucide-react";
 
+import { LogoMark } from "@/components/logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useUser } from "@/lib/use-user";
@@ -68,9 +69,12 @@ function Landing() {
       {/* Hero + onboarding */}
       <section className="mx-auto flex min-h-[88vh] max-w-xl flex-col items-center justify-center px-6 text-center">
         <div className="animate-rise">
-          <p className="prose-serif text-sm uppercase tracking-[0.35em] text-muted-foreground">
-            Throughline
-          </p>
+          <div className="mb-5 flex items-center justify-center gap-2.5">
+            <LogoMark className="h-8 w-8 text-primary" />
+            <span className="prose-serif text-sm uppercase tracking-[0.35em] text-muted-foreground">
+              Throughline
+            </span>
+          </div>
           <h1 className="prose-serif mt-6 text-balance text-4xl leading-tight text-foreground sm:text-5xl">
             Your life, quietly written.
           </h1>
