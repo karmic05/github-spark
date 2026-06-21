@@ -1,5 +1,5 @@
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { PenLine, Radar, Sparkles } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
@@ -40,14 +40,13 @@ const BEATS = [
 
 function Landing() {
   const navigate = useNavigate();
-  const { user, ready, signIn } = useUser();
+  const { user, ready, signIn, signOut } = useUser();
   const [name, setName] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Returning visitor → straight to the daily ritual.
-  useEffect(() => {
-    if (ready && user) navigate({ to: "/today" });
-  }, [ready, user, navigate]);
+  // We intentionally do NOT auto-redirect returning users — the landing page
+  // should always be reachable. Returning users get a "Continue" button.
+  const returning = ready && user;
 
   function begin() {
     const n = name.trim();
@@ -57,6 +56,11 @@ function Landing() {
     }
     signIn(n);
     navigate({ to: "/today" });
+  }
+
+  function focusStart() {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+    setTimeout(() => inputRef.current?.focus(), 400);
   }
 
   return (
@@ -75,20 +79,41 @@ function Landing() {
             yourself — and reflects them back to you.
           </p>
 
-          <div className="mt-8 flex flex-col gap-3">
-            <Input
-              ref={inputRef}
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && begin()}
-              placeholder="What should I call you?"
-              className="h-12 rounded-xl text-center text-base"
-              aria-label="Your name"
-            />
-            <Button onClick={begin} className="h-12 rounded-xl text-base">
-              Begin
-            </Button>
-          </div>
+          {returning ? (
+            <div className="mt-8 flex flex-col gap-3">
+              <Button
+                onClick={() => navigate({ to: "/today" })}
+                className="h-12 rounded-xl text-base"
+              >
+                Continue as {user!.name}
+              </Button>
+              <button
+                onClick={() => {
+                  signOut();
+                  setName("");
+                  inputRef.current?.focus();
+                }}
+                className="text-xs text-muted-foreground underline-offset-4 hover:underline"
+              >
+                Not you? Start fresh
+              </button>
+            </div>
+          ) : (
+            <div className="mt-8 flex flex-col gap-3">
+              <Input
+                ref={inputRef}
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && begin()}
+                placeholder="What should I call you?"
+                className="h-12 rounded-xl text-center text-base"
+                aria-label="Your name"
+              />
+              <Button onClick={begin} className="h-12 rounded-xl text-base">
+                Begin
+              </Button>
+            </div>
+          )}
           <p className="mt-5 text-xs text-muted-foreground">
             Private to this device. No account needed.
           </p>
@@ -101,7 +126,7 @@ function Landing() {
           <h2 className="prose-serif text-center text-sm uppercase tracking-[0.25em] text-muted-foreground">
             How it works
           </h2>
-          <div className="mt-10 grid gap-8 sm:grid-cols-1">
+          <div className="mt-10 grid gap-8">
             {BEATS.map(({ icon: Icon, title, body }) => (
               <div key={title} className="flex gap-4">
                 <div
@@ -122,14 +147,11 @@ function Landing() {
 
           <div className="mt-12 text-center">
             <Button
-              onClick={() => {
-                window.scrollTo({ top: 0, behavior: "smooth" });
-                setTimeout(() => inputRef.current?.focus(), 400);
-              }}
+              onClick={returning ? () => navigate({ to: "/today" }) : focusStart}
               variant="secondary"
               className="h-11 rounded-xl px-8"
             >
-              Start your throughline
+              {returning ? "Open your journal" : "Start your throughline"}
             </Button>
             <p className="prose-serif mt-10 text-pretty text-base italic leading-relaxed text-muted-foreground">
               “Running shows up on almost every good day. Conversations with one person warmed up

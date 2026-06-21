@@ -22,6 +22,8 @@ export interface LLMOptions {
   maxTokens?: number;
   /** Hint the provider to return JSON (best-effort). */
   json?: boolean;
+  /** Lower = more consistent (used for sentiment scoring). OpenAI-compatible only. */
+  temperature?: number;
 }
 
 export function llmConfigured(): boolean {
@@ -54,6 +56,7 @@ async function callOpenAICompatible(
     max_tokens: opts.maxTokens ?? 1024,
   };
   if (opts.json) body.response_format = { type: "json_object" };
+  if (opts.temperature != null) body.temperature = opts.temperature;
 
   const res = await fetch(cfg.url, {
     method: "POST",

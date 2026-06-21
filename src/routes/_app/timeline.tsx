@@ -2,6 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 
+import { EmotionBars } from "@/components/emotion-bars";
 import { MoodChart } from "@/components/mood-chart";
 import { Button } from "@/components/ui/button";
 import { LABEL_TEXT, moodColor, type TimelineEntry } from "@/lib/emotions";
@@ -160,12 +161,27 @@ function EntryCard({
         </span>
       </div>
       <p
-        className={`prose-serif px-4 pb-4 pt-2 text-base leading-relaxed text-foreground ${
-          open ? "" : "line-clamp-2"
+        className={`prose-serif px-4 pt-2 text-base leading-relaxed text-foreground ${
+          open ? "pb-3" : "line-clamp-2 pb-4"
         }`}
       >
         {entry.text}
       </p>
+
+      {/* Expanded: the day's stored emotion analysis, fetched from HydraDB. */}
+      {open && (
+        <div className="border-t border-border/50 px-4 pb-4 pt-3">
+          <div className="mb-2 flex items-center justify-between">
+            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
+              how the day felt
+            </span>
+            <span className="text-[11px] text-muted-foreground">
+              felt mostly {entry.dominant_emotion}
+            </span>
+          </div>
+          <EmotionBars emotions={entry.emotions} />
+        </div>
+      )}
     </button>
   );
 }

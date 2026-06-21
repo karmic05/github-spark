@@ -158,20 +158,32 @@ interface SubmitInput {
 
 const EXTRACTION_PROMPT = (
   text: string,
-) => `Analyze this single journal entry and return ONLY JSON matching this exact shape:
+) => `You are scoring ONE journal entry for an emotional-wellbeing journal. Read it closely — tone, word choice, what the writer dwells on, what's implied — and return ONLY a JSON object (no prose, no markdown).
+
+Score each of the eight emotion axes from 0.0 (clearly absent) to 1.0 (strong and unmistakable), judged from what the entry actually conveys. They are INDEPENDENT intensities, not a distribution: an entry can be high on several at once (e.g. both gratitude and sadness in a bittersweet entry). Be decisive and calibrated, not mushy:
+- A clearly good day → high joy/calm/hope/gratitude, low sadness/anxiety/anger/loneliness.
+- A clearly hard day → the reverse.
+- A mixed day → genuinely high on both sides.
+Do NOT default everything toward 0.5; commit to what the entry says. Most entries have one or two emotions clearly dominant.
+
+Then:
+- sentiment_score: overall valence from -1.0 (very low) to 1.0 (very good). Make it consistent with the axes.
+- sentiment_label: one of "very_low" | "low" | "neutral" | "good" | "great".
+- dominant_emotion: the single feeling that best captures the entry (one lowercase word).
+- themes: 2-4 short lowercase tags (e.g. "work", "family", "sleep", "running").
+- people: 0-3 first names actually mentioned (e.g. "Mom", "Dana").
+- reflection: one warm, specific sentence mirroring the entry back — no advice, no clinical tone.
+
+Return EXACTLY this shape:
 {
-  "sentiment_score": <number from -1.0 to 1.0>,
-  "sentiment_label": <"very_low" | "low" | "neutral" | "good" | "great">,
-  "dominant_emotion": <single lowercase word, e.g. "anxious", "calm", "proud", "lonely", "hopeful">,
-  "emotions": {
-    "joy": <0.0-1.0>, "calm": <0.0-1.0>, "hope": <0.0-1.0>, "gratitude": <0.0-1.0>,
-    "sadness": <0.0-1.0>, "anxiety": <0.0-1.0>, "anger": <0.0-1.0>, "loneliness": <0.0-1.0>
-  },
-  "themes": [<2-4 short lowercase tags like "work", "family", "sleep", "running">],
-  "people": [<0-3 first names mentioned, e.g. "Mom", "Dana">],
-  "reflection": <one warm sentence reflecting the entry back, no advice, no clinical tone>
+  "sentiment_score": <-1.0..1.0>,
+  "sentiment_label": "<very_low|low|neutral|good|great>",
+  "dominant_emotion": "<word>",
+  "emotions": { "joy": <0..1>, "calm": <0..1>, "hope": <0..1>, "gratitude": <0..1>, "sadness": <0..1>, "anxiety": <0..1>, "anger": <0..1>, "loneliness": <0..1> },
+  "themes": [<tags>],
+  "people": [<names>],
+  "reflection": "<one warm sentence>"
 }
-Each of the eight emotion axes is scored independently from 0.0 (absent) to 1.0 (strongly present); they are intensities, not a distribution.
 
 Entry:
 """${text}"""`;
@@ -247,6 +259,7 @@ export const submitEntry = createServerFn({ method: "POST" })
           system: VOICE,
           prompt: EXTRACTION_PROMPT(text),
           maxTokens: 700,
+          temperature: 0.2, // consistent, calibrated scoring (via Nebius)
         });
         analysis = coerceAnalysis(raw);
       } catch (err) {
