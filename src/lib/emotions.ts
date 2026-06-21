@@ -16,9 +16,6 @@ export const EMOTION_AXES = [
 export type EmotionAxis = (typeof EMOTION_AXES)[number];
 export type EmotionVector = Record<EmotionAxis, number>;
 
-/** The four positive-leaning axes — used only for gentle UI coloring. */
-export const POSITIVE_AXES: EmotionAxis[] = ["joy", "calm", "hope", "gratitude"];
-
 export type SentimentLabel = "very_low" | "low" | "neutral" | "good" | "great";
 
 export const WINDOW_KEYS = ["today", "week", "month", "quarter"] as const;
@@ -99,16 +96,6 @@ export function normalizeVector(input: unknown): EmotionVector {
     }
   }
   return out;
-}
-
-/** Parse the stored `emotions_json` metadata string back into a vector. */
-export function parseEmotionsJson(json: unknown): EmotionVector {
-  if (typeof json !== "string" || !json.trim()) return flatVector();
-  try {
-    return normalizeVector(JSON.parse(json));
-  } catch {
-    return flatVector();
-  }
 }
 
 export function labelFromScore(score: number): SentimentLabel {
