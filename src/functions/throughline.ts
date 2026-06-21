@@ -234,7 +234,7 @@ async function storeEntry(
 }
 
 export const submitEntry = createServerFn({ method: "POST" })
-  .validator((d: SubmitInput) => d)
+  .inputValidator((d: SubmitInput) => d)
   .handler(async ({ data }) => {
     const { userId, date, text } = data;
     await ensureTenantReady();
@@ -269,7 +269,7 @@ const FIRST_TIME_OPENER =
   "This is a blank page and a private one. Tell me a little about today — a few sentences is plenty.";
 
 export const getOpener = createServerFn({ method: "POST" })
-  .validator((d: { userId: string }) => d)
+  .inputValidator((d: { userId: string }) => d)
   .handler(async ({ data }) => {
     const { userId } = data;
     let snippets: string[] = [];
@@ -310,7 +310,7 @@ Write ONE short, warm, specific greeting (one or two sentences) to open today's 
 // ============================================================================
 
 export const getTimeline = createServerFn({ method: "POST" })
-  .validator((d: { userId: string }) => d)
+  .inputValidator((d: { userId: string }) => d)
   .handler(async ({ data }) => {
     const entries = await loadEntries(data.userId);
     return { entries };
@@ -362,7 +362,7 @@ function fallbackJudgement(w: { emotions: EmotionVector; valence: number; count:
 }
 
 export const getEmotionWindows = createServerFn({ method: "POST" })
-  .validator((d: { userId: string }) => d)
+  .inputValidator((d: { userId: string }) => d)
   .handler(async ({ data }): Promise<EmotionWindowsResult> => {
     const today = serverToday();
     const entries = await loadEntries(data.userId);
@@ -483,7 +483,7 @@ function fallbackInsights(entries: TimelineEntry[]): Insights {
 }
 
 export const getInsights = createServerFn({ method: "POST" })
-  .validator((d: { userId: string }) => d)
+  .inputValidator((d: { userId: string }) => d)
   .handler(async ({ data }): Promise<Insights> => {
     const { userId } = data;
     const entries = await loadEntries(userId);
@@ -565,7 +565,7 @@ interface SeedInput {
 }
 
 export const seedDemo = createServerFn({ method: "POST" })
-  .validator((d: SeedInput) => d)
+  .inputValidator((d: SeedInput) => d)
   .handler(async ({ data }) => {
     const required = process.env.SEED_TOKEN;
     if (required && data.token !== required) {
