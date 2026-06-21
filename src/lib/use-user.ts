@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 // The "user" for the hackathon is just a name the person gives on onboarding.
 // We slugify it into a stable sub_tenant_id and persist it in the browser, so
@@ -9,6 +9,21 @@ const KEY = "throughline.user";
 export interface ThroughlineUser {
   id: string; // sub_tenant_id
   name: string; // display name
+}
+
+// The authenticated user is provided once by the _app layout (which only
+// renders its children after the user is confirmed) and read by the app routes
+// via useCurrentUser(). This avoids each route re-deriving the user with its
+// own useUser() hook, whose state is null on first render (the bug that
+// crashed <Today> with `user!.id`).
+export const UserContext = createContext<ThroughlineUser | null>(null);
+
+export function useCurrentUser(): ThroughlineUser {
+  const user = useContext(UserContext);
+  if (!user) {
+    throw new Error("useCurrentUser must be used inside an authenticated route");
+  }
+  return user;
 }
 
 export function slugify(name: string): string {
@@ -39,7 +54,11 @@ function read(): ThroughlineUser | null {
  * first client render agree (avoids a hydration flash before localStorage).
  */
 export function useUser() {
-  const [user, setUser] = useState<ThroughlineUser | null>(null);
+  // Lazy initializer reads localStorage synchronously on the client, so a route
+  // component's `user` is already populated on its first render (server returns
+  // null — read() guards on `window`). Without this, each route's useUser was
+  // null on first render and `user!.id` crashed <Today>/<Timeline>/<Insights>.
+  const [user, setUser] = useState<ThroughlineUser | null>(() => read());
   const [ready, setReady] = useState(false);
 
   useEffect(() => {

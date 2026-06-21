@@ -1,13 +1,15 @@
-// LLM abstraction. All model calls live server-side. Two providers are
-// supported so the same code runs locally and on Lovable Cloud:
+// LLM abstraction. All model calls live server-side. Three providers are
+// supported so the same code runs anywhere:
 //
-//   1. Lovable AI Gateway (LOVABLE_API_KEY)  — auto-provisioned on Lovable.
-//      OpenAI-compatible chat-completions endpoint.
-//   2. Anthropic (ANTHROPIC_API_KEY)         — Claude Opus 4.8, Messages API.
+//   1. Nebius AI Studio (NEBIUS_API_KEY)     — OpenAI-compatible. Preferred.
+//   2. Lovable AI Gateway (LOVABLE_API_KEY)  — auto-provisioned on Lovable.
+//   3. Anthropic (ANTHROPIC_API_KEY)         — Claude Opus 4.8, Messages API.
 //
-// Both are called over plain fetch (no SDK dependency) so the bundle stays the
-// same locally and on Lovable, and nothing needs installing. Whichever key is
-// present wins (Lovable first). Callers handle parse/throw fallbacks.
+// All are called over plain fetch (no SDK dependency). The first key present
+// wins (Nebius → Lovable → Anthropic). Callers handle parse/throw fallbacks.
+
+const NEBIUS_URL =
+  process.env.NEBIUS_BASE_URL || "https://api.studio.nebius.com/v1/chat/completions";
 
 const LOVABLE_URL =
   process.env.LOVABLE_AI_URL || "https://ai.gateway.lovable.dev/v1/chat/completions";
@@ -23,44 +25,70 @@ export interface LLMOptions {
 }
 
 export function llmConfigured(): boolean {
-  return Boolean(process.env.LOVABLE_API_KEY || process.env.ANTHROPIC_API_KEY);
+  return Boolean(
+    process.env.NEBIUS_API_KEY || process.env.LOVABLE_API_KEY || process.env.ANTHROPIC_API_KEY,
+  );
 }
 
 export async function callLLM(opts: LLMOptions): Promise<string> {
+  if (process.env.NEBIUS_API_KEY) return callNebius(opts);
   if (process.env.LOVABLE_API_KEY) return callLovable(opts);
   if (process.env.ANTHROPIC_API_KEY) return callAnthropic(opts);
-  throw new Error("No LLM key configured. Set LOVABLE_API_KEY (Lovable AI) or ANTHROPIC_API_KEY.");
+  throw new Error(
+    "No LLM key configured. Set NEBIUS_API_KEY, LOVABLE_API_KEY, or ANTHROPIC_API_KEY.",
+  );
 }
 
-async function callLovable(opts: LLMOptions): Promise<string> {
-  const model = process.env.LOVABLE_AI_MODEL || "google/gemini-2.5-flash";
+// Shared path for OpenAI-compatible chat-completions APIs (Nebius + Lovable).
+async function callOpenAICompatible(
+  opts: LLMOptions,
+  cfg: { url: string; key: string; model: string; provider: string },
+): Promise<string> {
   const messages: { role: string; content: string }[] = [];
   if (opts.system) messages.push({ role: "system", content: opts.system });
   messages.push({ role: "user", content: opts.prompt });
 
   const body: Record<string, unknown> = {
-    model,
+    model: cfg.model,
     messages,
     max_tokens: opts.maxTokens ?? 1024,
   };
   if (opts.json) body.response_format = { type: "json_object" };
 
-  const res = await fetch(LOVABLE_URL, {
+  const res = await fetch(cfg.url, {
     method: "POST",
     headers: {
-      Authorization: `Bearer ${process.env.LOVABLE_API_KEY}`,
+      Authorization: `Bearer ${cfg.key}`,
       "Content-Type": "application/json",
     },
     body: JSON.stringify(body),
   });
   if (!res.ok) {
     const detail = await res.text();
-    throw new Error(`Lovable AI ${res.status}: ${detail.slice(0, 400)}`);
+    throw new Error(`${cfg.provider} ${res.status}: ${detail.slice(0, 400)}`);
   }
   const json = (await res.json()) as {
     choices?: { message?: { content?: string } }[];
   };
   return json.choices?.[0]?.message?.content ?? "";
+}
+
+function callNebius(opts: LLMOptions): Promise<string> {
+  return callOpenAICompatible(opts, {
+    url: NEBIUS_URL,
+    key: process.env.NEBIUS_API_KEY ?? "",
+    model: process.env.NEBIUS_MODEL || "meta-llama/Llama-3.3-70B-Instruct",
+    provider: "Nebius",
+  });
+}
+
+function callLovable(opts: LLMOptions): Promise<string> {
+  return callOpenAICompatible(opts, {
+    url: LOVABLE_URL,
+    key: process.env.LOVABLE_API_KEY ?? "",
+    model: process.env.LOVABLE_AI_MODEL || "google/gemini-2.5-flash",
+    provider: "Lovable AI",
+  });
 }
 
 async function callAnthropic(opts: LLMOptions): Promise<string> {
