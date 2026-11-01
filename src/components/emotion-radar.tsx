@@ -45,12 +45,13 @@ export function EmotionRadar({ data, series, height = 320 }: EmotionRadarProps) 
   return (
     <ResponsiveContainer width="100%" height={height}>
       <RadarChart data={data} outerRadius="72%">
-        <PolarGrid stroke="var(--color-border)" strokeOpacity={0.7} />
+        <PolarGrid stroke="oklch(0.2 0.014 60 / 0.22)" strokeOpacity={1} />
         <PolarAngleAxis
           dataKey="label"
           tick={{
             fill: "var(--color-muted-foreground)",
             fontSize: 11,
+            fontFamily: "var(--font-mono)",
           }}
         />
         <PolarRadiusAxis domain={[0, 1]} tick={false} axisLine={false} />
@@ -60,9 +61,9 @@ export function EmotionRadar({ data, series, height = 320 }: EmotionRadarProps) 
             name={s.label}
             dataKey={s.key}
             stroke={s.color}
-            strokeWidth={1.5}
+            strokeWidth={2}
             fill={s.color}
-            fillOpacity={0.22}
+            fillOpacity={0.16}
             isAnimationActive
             animationDuration={700}
           />

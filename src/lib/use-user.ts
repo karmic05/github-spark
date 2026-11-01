@@ -1,8 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useState } from "react";
 
 // The "user" for the hackathon is just a name the person gives on onboarding.
-// We slugify it into a stable sub_tenant_id and persist it in the browser, so
-// the same person always maps to the same HydraDB memory.
+// We slugify it into a stable per-person id and persist it in the browser, so
+// the same person always maps to the same journal.
 
 const KEY = "throughline.user";
 

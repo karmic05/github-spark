@@ -6,39 +6,41 @@ import { EmotionBars } from "@/components/emotion-bars";
 import { MoodChart } from "@/components/mood-chart";
 import { Button } from "@/components/ui/button";
 import { LABEL_TEXT, moodColor, type TimelineEntry } from "@/lib/emotions";
-import { useUser } from "@/lib/use-user";
-import { getTimeline, seedDemo } from "@/functions/throughline";
+import { seedDemo } from "@/functions/throughline";
+import { loadEntries, mergeEntries } from "@/lib/journal-store";
+import { todayISO, useUser } from "@/lib/use-user";
 
 export const Route = createFileRoute("/_app/timeline")({
   component: Timeline,
 });
 
+const MONTHS = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
 function monthLabel(iso: string): string {
   const [y, m] = iso.split("-").map(Number);
-  const months = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-  ];
-  return `${months[(m || 1) - 1]} ${y}`;
+  return `${MONTHS[(m || 1) - 1]} ${y}`;
 }
 
-function dayLabel(iso: string): string {
+function dayParts(iso: string): { day: string; weekday: string } {
   const [y, m, d] = iso.split("-").map(Number);
-  return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
+  const dt = new Date(Date.UTC(y, m - 1, d, 12));
+  return {
+    day: String(d).padStart(2, "0"),
+    weekday: dt.toLocaleDateString(undefined, { weekday: "short", timeZone: "UTC" }),
+  };
 }
 
 function Timeline() {
@@ -49,12 +51,15 @@ function Timeline() {
 
   const timelineQ = useQuery({
     queryKey: ["timeline", userId],
-    queryFn: () => getTimeline({ data: { userId } }),
+    queryFn: async () => ({ entries: loadEntries(userId) }),
     staleTime: 30_000,
   });
 
   const seed = useMutation({
-    mutationFn: () => seedDemo({ data: { userId } }),
+    mutationFn: async () => {
+      const { entries } = await seedDemo({ data: { today: todayISO() } });
+      if (!mergeEntries(userId, entries)) throw new Error("storage");
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["timeline", userId] });
       qc.invalidateQueries({ queryKey: ["windows", userId] });
@@ -76,27 +81,28 @@ function Timeline() {
   }
 
   return (
-    <main className="px-5 pt-10">
+    <main className="px-5 pt-8">
       <header>
-        <h1 className="prose-serif text-2xl text-foreground">The autobiography</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
+        <p className="eyebrow">The record</p>
+        <h1 className="display mt-2 text-[2.6rem]">The autobiography</h1>
+        <p className="mt-2 font-mono text-xs text-muted-foreground">
           {ascending.length} {ascending.length === 1 ? "entry" : "entries"} so far
         </p>
       </header>
 
       {ascending.length > 0 && (
-        <section className="mt-6 rounded-2xl border border-border/70 bg-card/50 p-3">
+        <section className="sheet mt-6 p-3">
           <MoodChart entries={ascending} />
         </section>
       )}
 
-      <section className="mt-6 space-y-3">
+      <section className="mt-6">
         {timelineQ.isLoading && <p className="text-sm text-muted-foreground">reading the pages…</p>}
 
         {!timelineQ.isLoading && ascending.length === 0 && (
-          <div className="rounded-2xl border border-dashed border-border p-6 text-center">
-            <p className="prose-serif text-lg text-foreground">No pages yet.</p>
-            <p className="mt-2 text-sm text-muted-foreground">
+          <div className="sheet border-dashed p-6">
+            <p className="prose-serif text-2xl leading-tight">No pages yet.</p>
+            <p className="mt-2 text-pretty text-[0.95rem] leading-relaxed text-muted-foreground">
               Write your first entry on Today — or load a demo life to see how the story comes
               together.
             </p>
@@ -104,14 +110,12 @@ function Timeline() {
               variant="secondary"
               onClick={() => seed.mutate()}
               disabled={seed.isPending}
-              className="mt-4 rounded-xl"
+              className="mt-4"
             >
               {seed.isPending ? "Composing 90 days…" : "Load a demo life"}
             </Button>
             {seed.isError && (
-              <p className="mt-2 text-xs text-destructive">
-                Seeding is protected on this deployment.
-              </p>
+              <p className="mt-2 text-xs text-destructive">Couldn't load the demo here.</p>
             )}
           </div>
         )}
@@ -122,11 +126,11 @@ function Timeline() {
           return (
             <div key={entry.date + i}>
               {showMonth && (
-                <p className="prose-serif px-1 pb-2 pt-4 text-sm uppercase tracking-widest text-muted-foreground">
+                <p className="eyebrow border-b border-foreground/15 pb-2 pt-7 first:pt-0">
                   {monthLabel(entry.date)}
                 </p>
               )}
-              <EntryCard
+              <EntryRow
                 entry={entry}
                 open={expanded.has(entry.date)}
                 onToggle={() => toggle(entry.date)}
@@ -139,7 +143,7 @@ function Timeline() {
   );
 }
 
-function EntryCard({
+function EntryRow({
   entry,
   open,
   onToggle,
@@ -148,40 +152,52 @@ function EntryCard({
   open: boolean;
   onToggle: () => void;
 }) {
+  const { day, weekday } = dayParts(entry.date);
+  const tone = moodColor(entry.sentiment_score);
   return (
     <button
       onClick={onToggle}
-      className="w-full overflow-hidden rounded-2xl border border-border/70 bg-card/60 text-left shadow-sm transition-colors hover:bg-card"
-      style={{ borderLeft: `4px solid ${moodColor(entry.sentiment_score)}` }}
+      aria-expanded={open}
+      className="lift press block w-full border-b border-foreground/15 py-4 text-left"
     >
-      <div className="flex items-center justify-between px-4 pt-3">
-        <span className="text-xs font-medium text-muted-foreground">{dayLabel(entry.date)}</span>
-        <span className="text-xs" style={{ color: moodColor(entry.sentiment_score) }}>
-          {LABEL_TEXT[entry.sentiment_label]}
-        </span>
-      </div>
-      <p
-        className={`prose-serif px-4 pt-2 text-base leading-relaxed text-foreground ${
-          open ? "pb-3" : "line-clamp-2 pb-4"
-        }`}
-      >
-        {entry.text}
-      </p>
-
-      {/* Expanded: the day's stored emotion analysis, fetched from HydraDB. */}
-      {open && (
-        <div className="border-t border-border/50 px-4 pb-4 pt-3">
-          <div className="mb-2 flex items-center justify-between">
-            <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
-              how the day felt
-            </span>
-            <span className="text-[11px] text-muted-foreground">
-              felt mostly {entry.dominant_emotion}
-            </span>
-          </div>
-          <EmotionBars emotions={entry.emotions} />
+      <div className="grid grid-cols-[3.25rem_1fr] gap-x-4">
+        <div className="relative pl-3">
+          <span
+            aria-hidden
+            className="absolute inset-y-1 left-0 w-[3px] rounded-none"
+            style={{ background: tone }}
+          />
+          <span className="display block text-[2rem] leading-none">{day}</span>
+          <span className="eyebrow mt-1 block !text-[10px]">{weekday}</span>
         </div>
-      )}
+        <div className="min-w-0">
+          <p className="font-mono text-[11px]" style={{ color: tone }}>
+            {LABEL_TEXT[entry.sentiment_label]}
+          </p>
+          <div className="mt-1">
+            <p
+              className={`prose-serif whitespace-pre-line text-[1.05rem] leading-relaxed ${
+                open ? "" : "line-clamp-2"
+              }`}
+            >
+              {entry.text}
+            </p>
+          </div>
+
+          {/* Expanded: the day's stored emotion analysis. */}
+          {open && (
+            <div className="animate-rise mt-4 border-t border-foreground/15 pt-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="eyebrow whitespace-nowrap">how the day felt</span>
+                <span className="ml-3 truncate font-mono text-[11px] text-muted-foreground">
+                  felt mostly {entry.dominant_emotion}
+                </span>
+              </div>
+              <EmotionBars emotions={entry.emotions} />
+            </div>
+          )}
+        </div>
+      </div>
     </button>
   );
 }

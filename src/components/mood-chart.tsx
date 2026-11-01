@@ -53,12 +53,12 @@ export function MoodChart({ entries, height = 200 }: MoodChartProps) {
         <defs>
           <linearGradient id="moodFill" x1="0" y1="0" x2="0" y2="1">
             <stop offset="0%" stopColor="var(--color-chart-4)" stopOpacity={0.5} />
-            <stop offset="100%" stopColor="var(--color-chart-1)" stopOpacity={0.05} />
+            <stop offset="100%" stopColor="var(--color-chart-1)" stopOpacity={0.02} />
           </linearGradient>
         </defs>
         <XAxis
           dataKey="label"
-          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10 }}
+          tick={{ fill: "var(--color-muted-foreground)", fontSize: 10, fontFamily: "var(--font-mono)" }}
           interval="preserveStartEnd"
           minTickGap={32}
           axisLine={false}
@@ -70,7 +70,7 @@ export function MoodChart({ entries, height = 200 }: MoodChartProps) {
           contentStyle={{
             background: "var(--color-popover)",
             border: "1px solid var(--color-border)",
-            borderRadius: 12,
+            borderRadius: 4,
             fontSize: 12,
             color: "var(--color-popover-foreground)",
           }}
@@ -83,8 +83,8 @@ export function MoodChart({ entries, height = 200 }: MoodChartProps) {
         <Area
           type="monotone"
           dataKey="score"
-          stroke="var(--color-chart-5)"
-          strokeWidth={2}
+          stroke="var(--ink)"
+          strokeWidth={1.5}
           fill="url(#moodFill)"
           isAnimationActive
           animationDuration={900}

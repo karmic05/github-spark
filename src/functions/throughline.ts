@@ -16,15 +16,14 @@ import {
   normalizeVector,
   clampValence,
 } from "../lib/emotions";
-import {
-  addMemories,
-  ensureTenantReady,
-  listMemories,
-  recall,
-  type RawMemory,
-} from "../server/hydra";
+import { heuristicAnalysis } from "../lib/heuristic-sentiment";
+import { tidy } from "../lib/tidy";
 import { callLLM, callLLMJson, llmConfigured } from "../server/llm";
 import { generateSeedEntries } from "../server/seed-data";
+
+// The server is stateless: the journal lives in the browser (lib/journal-store)
+// and each call receives whatever entries it needs. The server's only jobs are
+// to read the tone of an entry, write the agent's voice, and find patterns.
 
 // The agent's register: a thoughtful biographer and a kind friend. It reflects,
 // it does not advise. No clinical tone, no diagnosis.
@@ -32,10 +31,45 @@ const VOICE = `You are the quiet intelligence behind Throughline, a private jour
 You write like a thoughtful biographer and a kind friend — specific, warm, literary, brief.
 You reflect a person back to themselves with real detail; you never advise, never diagnose,
 never use clinical phrasing like "it sounds like". You are not a therapist or a chatbot.
-Throughline is a journaling companion, not a mental health tool, and never presents itself as one.`;
+Throughline is a journaling companion, not a mental health tool, and never presents itself as one.
+Always address the writer directly as "you".`;
 
-function serverToday(): string {
-  return new Date().toISOString().slice(0, 10);
+// --- input guards -----------------------------------------------------------
+
+const MAX_ENTRY_CHARS = 8000;
+const MAX_ENTRIES = 400;
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function assertDate(d: unknown): string {
+  if (typeof d !== "string" || !DATE_RE.test(d)) throw new Error("Invalid date");
+  return d;
+}
+
+interface EntryInput {
+  date: string;
+  text: string;
+  sentiment_score: number;
+  dominant_emotion: string;
+  emotions: EmotionVector;
+}
+
+function validateEntries(raw: unknown): EntryInput[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .slice(-MAX_ENTRIES)
+    .filter((e) => e && typeof e === "object" && DATE_RE.test((e as { date?: string }).date ?? ""))
+    .map((e) => {
+      const r = e as Record<string, unknown>;
+      const score = clampValence(Number(r.sentiment_score));
+      return {
+        date: String(r.date),
+        text: String(r.text ?? "").slice(0, MAX_ENTRY_CHARS),
+        sentiment_score: Number.isFinite(score) ? score : 0,
+        dominant_emotion: typeof r.dominant_emotion === "string" ? r.dominant_emotion : "calm",
+        emotions: normalizeVector(r.emotions),
+      };
+    })
+    .sort((a, b) => a.date.localeCompare(b.date));
 }
 
 function daysAgo(dateISO: string, todayISO: string): number {
@@ -46,115 +80,11 @@ function daysAgo(dateISO: string, todayISO: string): number {
   return Math.round((p(todayISO) - p(dateISO)) / 86_400_000);
 }
 
-// --- entry text sidecar -----------------------------------------------------
-//
-// The live /list/data endpoint returns no metadata, so we embed the analysis as
-// a compact sidecar appended to the stored text. The user-visible text is the
-// part before the tag; the sidecar is decoded for the timeline / radar and
-// stripped before any recalled snippet is shown to the LLM. We *also* write the
-// HydraDB metadata fields (used by recall + the graph) for good measure.
-
-const META_TAG = "\n@@meta@@";
-
-interface EntryMeta {
-  s: number;
-  l: SentimentLabel;
-  d: string;
-  e: EmotionVector;
-  t?: string[];
-  p?: string[];
-}
-
-function encodeEntryText(
-  text: string,
-  a: {
-    sentiment_score: number;
-    sentiment_label: SentimentLabel;
-    dominant_emotion: string;
-    emotions: EmotionVector;
-    themes?: string[];
-    people?: string[];
-  },
-): string {
-  const meta: EntryMeta = {
-    s: a.sentiment_score,
-    l: a.sentiment_label,
-    d: a.dominant_emotion,
-    e: a.emotions,
-    t: a.themes,
-    p: a.people,
-  };
-  return `${text}${META_TAG}${JSON.stringify(meta)}`;
-}
-
-function decodeEntryText(stored: string): { text: string; meta: EntryMeta | null } {
-  const i = stored.indexOf(META_TAG);
-  if (i === -1) return { text: stored.trim(), meta: null };
-  const text = stored.slice(0, i).trim();
-  try {
-    return { text, meta: JSON.parse(stored.slice(i + META_TAG.length)) as EntryMeta };
-  } catch {
-    return { text, meta: null };
-  }
-}
-
-/** Drop the sidecar from any text before it reaches the LLM or the user. */
-function stripMeta(s: string): string {
-  const i = s.indexOf(META_TAG);
-  return (i === -1 ? s : s.slice(0, i)).trim();
-}
-
-/** A recalled snippet is useful only if it's real prose (not a stray JSON chunk). */
-function cleanSnippet(s: string): string {
-  const out = stripMeta(s);
-  return out.startsWith("{") ? "" : out;
-}
-
-// --- list item -> timeline entry -------------------------------------------
-
-function itemToEntry(item: RawMemory): TimelineEntry | null {
-  // memory_id is our source_id: entry_<userId>_<YYYY-MM-DD>
-  const m = item.memory_id?.match(/(\d{4}-\d{2}-\d{2})$/);
-  const date = m ? m[1] : "";
-  if (!date) return null;
-  const { text, meta } = decodeEntryText(item.memory_content || "");
-  const score = meta ? clampValence(Number(meta.s)) : 0;
-  return {
-    date,
-    text,
-    sentiment_score: Number.isFinite(score) ? score : 0,
-    sentiment_label: meta?.l ?? labelFromScore(score),
-    dominant_emotion: meta?.d ?? "calm",
-    emotions: meta?.e ? normalizeVector(meta.e) : flatVector(),
-  };
-}
-
-async function loadEntries(userId: string): Promise<TimelineEntry[]> {
-  const items = await listMemories(userId);
-  return items
-    .map(itemToEntry)
-    .filter((e): e is TimelineEntry => e !== null)
-    .sort((a, b) => a.date.localeCompare(b.date));
-}
+const snip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
 // ============================================================================
-// 1. init-tenant
+// 1. analyze-entry (score one entry)
 // ============================================================================
-
-export const initTenant = createServerFn({ method: "POST" }).handler(async () => {
-  const ready = await ensureTenantReady();
-  return { ok: ready, ready };
-});
-
-// ============================================================================
-// 2. submit-entry
-// ============================================================================
-
-interface SubmitInput {
-  userId: string;
-  date: string;
-  text: string;
-}
 
 const EXTRACTION_PROMPT = (
   text: string,
@@ -172,7 +102,7 @@ Then:
 - dominant_emotion: the single feeling that best captures the entry (one lowercase word).
 - themes: 2-4 short lowercase tags (e.g. "work", "family", "sleep", "running").
 - people: 0-3 first names actually mentioned (e.g. "Mom", "Dana").
-- reflection: one warm, specific sentence mirroring the entry back — no advice, no clinical tone.
+- reflection: one warm, specific sentence mirroring the entry back, addressed to the writer as "you" — no advice, no clinical tone.
 
 Return EXACTLY this shape:
 {
@@ -188,28 +118,19 @@ Return EXACTLY this shape:
 Entry:
 """${text}"""`;
 
-function neutralAnalysis(): EntryAnalysis {
-  return {
-    sentiment_score: 0,
-    sentiment_label: "neutral",
-    dominant_emotion: "calm",
-    emotions: flatVector(),
-    themes: [],
-    people: [],
-    reflection: "Noted, and held. Thank you for putting today into words.",
-  };
-}
+const LABELS: SentimentLabel[] = ["very_low", "low", "neutral", "good", "great"];
 
 function coerceAnalysis(raw: unknown): EntryAnalysis {
   const r = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
   const score = clampValence(Number(r.sentiment_score));
+  if (!Number.isFinite(score) || r.emotions == null) throw new Error("Unusable analysis");
   const emotions = normalizeVector(r.emotions);
+  const label = LABELS.includes(r.sentiment_label as SentimentLabel)
+    ? (r.sentiment_label as SentimentLabel)
+    : labelFromScore(score);
   return {
-    sentiment_score: Number.isFinite(score) ? score : 0,
-    sentiment_label:
-      typeof r.sentiment_label === "string"
-        ? (r.sentiment_label as EntryAnalysis["sentiment_label"])
-        : labelFromScore(score),
+    sentiment_score: score,
+    sentiment_label: label,
     dominant_emotion:
       typeof r.dominant_emotion === "string" && r.dominant_emotion
         ? r.dominant_emotion.toLowerCase()
@@ -220,99 +141,71 @@ function coerceAnalysis(raw: unknown): EntryAnalysis {
       : [],
     people: Array.isArray(r.people) ? r.people.slice(0, 3).map((p: unknown) => String(p)) : [],
     reflection:
-      typeof r.reflection === "string" && r.reflection ? r.reflection : "Noted, and held.",
+      typeof r.reflection === "string" && r.reflection.trim()
+        ? tidy(r.reflection)
+        : "Noted, and held.",
   };
 }
 
-async function storeEntry(
-  userId: string,
-  date: string,
-  text: string,
-  a: EntryAnalysis,
-): Promise<void> {
-  await addMemories(userId, [
-    {
-      source_id: `entry_${userId}_${date}`,
-      text: encodeEntryText(text, a),
-      infer: false,
-      metadata: {
-        entry_date: date,
-        sentiment_label: a.sentiment_label,
-        sentiment_score: String(a.sentiment_score),
-        dominant_emotion: a.dominant_emotion,
-        emotions_json: JSON.stringify(a.emotions),
-      },
-    },
-  ]);
-}
+// Small in-memory memo so identical text (e.g. the home-page demo samples) is
+// scored once per server instance. Scoring runs at a low temperature anyway.
+const analysisMemo = new Map<string, EntryAnalysis>();
+const MEMO_MAX = 200;
 
-export const submitEntry = createServerFn({ method: "POST" })
-  .inputValidator((d: SubmitInput) => d)
-  .handler(async ({ data }) => {
-    const { userId, date, text } = data;
-    await ensureTenantReady();
-
-    let analysis: EntryAnalysis;
+export const analyzeEntry = createServerFn({ method: "POST" })
+  .inputValidator((d: { text: string }) => {
+    const text = typeof d?.text === "string" ? d.text.trim().slice(0, MAX_ENTRY_CHARS) : "";
+    if (!text) throw new Error("Entry is empty");
+    return { text };
+  })
+  .handler(async ({ data }): Promise<EntryAnalysis & { source: "model" | "fallback" }> => {
+    const memo = analysisMemo.get(data.text);
+    if (memo) return { ...memo, source: "model" };
     if (llmConfigured()) {
       try {
         const raw = await callLLMJson({
           system: VOICE,
-          prompt: EXTRACTION_PROMPT(text),
+          prompt: EXTRACTION_PROMPT(data.text),
           maxTokens: 700,
-          temperature: 0.2, // consistent, calibrated scoring (via Nebius)
+          temperature: 0.2, // consistent, calibrated scoring
         });
-        analysis = coerceAnalysis(raw);
+        const analysis = coerceAnalysis(raw);
+        if (analysisMemo.size >= MEMO_MAX) analysisMemo.delete(analysisMemo.keys().next().value as string);
+        analysisMemo.set(data.text, analysis);
+        return { ...analysis, source: "model" };
       } catch (err) {
-        console.error("submit-entry: LLM analysis failed, using neutral", err);
-        analysis = neutralAnalysis();
+        console.error("analyze-entry: LLM failed, using keyword fallback", err);
       }
-    } else {
-      analysis = neutralAnalysis();
     }
-
-    // Never let an entry fail to save.
-    await storeEntry(userId, date, text, analysis);
-    return analysis;
+    // Never let an entry fail to save: fall back to a simple keyword read.
+    return { ...heuristicAnalysis(data.text), source: "fallback" };
   });
 
 // ============================================================================
-// 3. get-opener
+// 2. get-opener
 // ============================================================================
 
 const FIRST_TIME_OPENER =
   "This is a blank page and a private one. Tell me a little about today — a few sentences is plenty.";
 
 export const getOpener = createServerFn({ method: "POST" })
-  .inputValidator((d: { userId: string }) => d)
+  .inputValidator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
   .handler(async ({ data }) => {
-    const { userId } = data;
-    let snippets: string[] = [];
-    try {
-      const results = await recall(
-        userId,
-        "what has this person been feeling lately, and what ongoing situations, people, worries, or small wins should I gently follow up on",
-        { maxResults: 12, mode: "thinking" },
-      );
-      snippets = results.map((r) => cleanSnippet(r.text)).filter(Boolean);
-    } catch (err) {
-      console.error("get-opener: recall failed", err);
-    }
-
-    if (snippets.length === 0 || !llmConfigured()) {
+    const recent = data.entries.filter((e) => e.text.trim()).slice(-8);
+    if (recent.length === 0 || !llmConfigured()) {
       return { opener: FIRST_TIME_OPENER };
     }
-
     try {
       const opener = await callLLM({
         system: VOICE,
-        prompt: `Here are recalled fragments from this person's past entries (most recent and most relevant):
+        prompt: `Here are this person's most recent journal entries (oldest first):
 
-${snippets.map((s, i) => `${i + 1}. ${s}`).join("\n")}
+${recent.map((e, i) => `${i + 1}. [${e.date}] ${snip(e.text, 320)}`).join("\n")}
 
 Write ONE short, warm, specific greeting (one or two sentences) to open today's check-in. Reference something real from the past — a person by name, a prior worry, or a small win — the way a close friend who remembers would. Reflect, do not advise. Return only the greeting text, no quotes.`,
         maxTokens: 160,
       });
-      return { opener: opener.trim() || FIRST_TIME_OPENER };
+      return { opener: opener.trim().replace(/^["“]|["”]$/g, "") || FIRST_TIME_OPENER };
     } catch (err) {
       console.error("get-opener: LLM failed", err);
       return { opener: FIRST_TIME_OPENER };
@@ -320,21 +213,10 @@ Write ONE short, warm, specific greeting (one or two sentences) to open today's 
   });
 
 // ============================================================================
-// 4. get-timeline
+// 3. get-emotion-windows
 // ============================================================================
 
-export const getTimeline = createServerFn({ method: "POST" })
-  .inputValidator((d: { userId: string }) => d)
-  .handler(async ({ data }) => {
-    const entries = await loadEntries(data.userId);
-    return { entries };
-  });
-
-// ============================================================================
-// 5. get-emotion-windows
-// ============================================================================
-
-function averageWindow(entries: TimelineEntry[]): {
+function averageWindow(entries: EntryInput[]): {
   emotions: EmotionVector;
   valence: number;
   count: number;
@@ -376,11 +258,12 @@ function fallbackJudgement(w: { emotions: EmotionVector; valence: number; count:
 }
 
 export const getEmotionWindows = createServerFn({ method: "POST" })
-  .inputValidator((d: { userId: string }) => d)
+  .inputValidator((d: { entries: unknown; today: string }) => ({
+    entries: validateEntries(d?.entries),
+    today: assertDate(d?.today),
+  }))
   .handler(async ({ data }): Promise<EmotionWindowsResult> => {
-    const today = serverToday();
-    const entries = await loadEntries(data.userId);
-
+    const { entries, today } = data;
     const withAge = entries.map((e) => ({ e, age: daysAgo(e.date, today) }));
 
     const todayEntries = withAge.filter((x) => x.age === 0).map((x) => x.e);
@@ -388,23 +271,19 @@ export const getEmotionWindows = createServerFn({ method: "POST" })
     if (todayBucket.length === 0 && entries.length > 0) {
       todayBucket = [entries[entries.length - 1]]; // most recent
     }
-    const weekBucket = withAge.filter((x) => x.age >= 0 && x.age <= 6).map((x) => x.e);
-    const monthBucket = withAge.filter((x) => x.age >= 0 && x.age <= 29).map((x) => x.e);
-    const quarterBucket = withAge.filter((x) => x.age >= 0 && x.age <= 89).map((x) => x.e);
+    const inRange = (max: number) => withAge.filter((x) => x.age >= 0 && x.age <= max).map((x) => x.e);
 
-    const buckets: Record<WindowKey, TimelineEntry[]> = {
+    const buckets: Record<WindowKey, EntryInput[]> = {
       today: todayBucket,
-      week: weekBucket,
-      month: monthBucket,
-      quarter: quarterBucket,
+      week: inRange(6),
+      month: inRange(29),
+      quarter: inRange(89),
       all: entries, // every entry, no date filter — the whole story
     };
 
     const stats = {} as Record<WindowKey, ReturnType<typeof averageWindow>>;
     for (const k of WINDOW_KEYS) stats[k] = averageWindow(buckets[k]);
 
-    // Generate all the warm judgements in one LLM call (grounded in the
-    // averaged axes plus a couple of real snippets per window).
     const judgements = {} as Record<WindowKey, string>;
     for (const k of WINDOW_KEYS) judgements[k] = fallbackJudgement(stats[k]);
 
@@ -427,7 +306,7 @@ export const getEmotionWindows = createServerFn({ method: "POST" })
           const axesStr = EMOTION_AXES.map((a) => `${a} ${s.emotions[a].toFixed(2)}`).join(", ");
           const sample = buckets[k]
             .slice(-2)
-            .map((e) => `"${e.text.slice(0, 160)}"`)
+            .map((e) => `"${snip(e.text, 160)}"`)
             .join(" ");
           return `${label}: ${s.count} entries, average mood ${s.valence.toFixed(
             2,
@@ -446,8 +325,6 @@ Return ONLY JSON with these keys: {"today": "...", "week": "...", "month": "..."
         for (const k of WINDOW_KEYS) {
           if (stats[k].count > 0 && typeof raw[k] === "string" && raw[k].trim()) {
             judgements[k] = raw[k].trim();
-          } else if (stats[k].count === 0) {
-            judgements[k] = "";
           }
         }
       } catch (err) {
@@ -469,73 +346,48 @@ Return ONLY JSON with these keys: {"today": "...", "week": "...", "month": "..."
   });
 
 // ============================================================================
-// 6. get-insights (the reveal)
+// 4. get-insights (the reveal)
 // ============================================================================
 
-const INSIGHT_LENSES = [
-  "the recurring emotional themes across these entries",
-  "the people who matter most here and how those relationships changed over time",
-  "the activities, places, or routines tied to this person's best days",
-  "what the hardest stretches had in common",
-  "how the overall mood has shifted from the earliest entries to the most recent",
-];
-
-function fallbackInsights(entries: TimelineEntry[]): Insights {
+function fallbackInsights(entryCount: number): Insights {
   return {
     headline:
-      entries.length > 0
+      entryCount > 0
         ? "A season with real movement in it — heavier weeks and lighter ones, and a throughline of people who matter."
         : "Your story starts the moment you write your first entry.",
     recurring_themes: [],
     people: [],
     bright_spots: [],
     hard_patterns: [],
-    emotional_arc: "Add a few more entries and the arc of these weeks will come into focus here.",
+    emotional_arc:
+      "Add a few more entries and the arc of these weeks will come into focus here.",
     surprise: "",
   };
 }
 
 export const getInsights = createServerFn({ method: "POST" })
-  .inputValidator((d: { userId: string }) => d)
+  .inputValidator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
   .handler(async ({ data }): Promise<Insights> => {
-    const { userId } = data;
-    const entries = await loadEntries(userId);
+    const entries = data.entries;
 
     if (entries.length === 0 || !llmConfigured()) {
-      return fallbackInsights(entries);
+      return fallbackInsights(entries.length);
     }
 
-    // Broad recall across several lenses (thinking mode = graph traversal).
-    const recalls = await Promise.all(
-      INSIGHT_LENSES.map((lens) =>
-        recall(userId, lens, { maxResults: 10, mode: "thinking" })
-          .then((r) => ({
-            lens,
-            snippets: r.map((x) => cleanSnippet(x.text)).filter(Boolean),
-          }))
-          .catch(() => ({ lens, snippets: [] as string[] })),
-      ),
-    );
-
+    // The most recent 60 entries, trimmed, are plenty for pattern-finding.
+    const window = entries.slice(-60);
+    const entryBlock = window.map((e) => `[${e.date}] ${snip(e.text, 380)}`).join("\n");
     const moodLine = entries
       .map((e) => `${e.date} ${e.sentiment_score.toFixed(2)} (${e.dominant_emotion})`)
       .join("\n");
 
-    const lensBlock = recalls
-      .map(
-        (r) =>
-          `## ${r.lens}\n${
-            r.snippets.length ? r.snippets.map((s) => `- ${s}`).join("\n") : "- (nothing surfaced)"
-          }`,
-      )
-      .join("\n\n");
-
     try {
       const insights = await callLLMJson<Insights>({
         system: VOICE,
-        prompt: `Below are fragments recalled from a person's private journal, grouped by lens, plus a day-by-day mood trace. Synthesize what you notice across the whole period. Insist on specifics drawn from the entries — names, concrete details, real recurrences — never generic platitudes.
+        prompt: `Below are a person's private journal entries plus a day-by-day mood trace. Synthesize what you notice across the whole period: recurring emotional themes, the people who matter and how those relationships changed, what is tied to the best days, what the hardest stretches had in common, and how the mood shifted from earliest to most recent. Insist on specifics drawn from the entries — names, concrete details, real recurrences — never generic platitudes. Address the person as "you".
 
-${lensBlock}
+## entries (oldest first)
+${entryBlock}
 
 ## day-by-day mood (date, score -1..1, dominant emotion)
 ${moodLine}
@@ -552,75 +404,36 @@ Return ONLY JSON in this exact shape:
 }`,
         maxTokens: 1400,
       });
-      // Light shape guard.
+      const fb = fallbackInsights(entries.length);
+      const list = <T>(v: unknown): T[] => (Array.isArray(v) ? (v as T[]) : []);
       return {
-        headline: insights.headline || fallbackInsights(entries).headline,
-        recurring_themes: Array.isArray(insights.recurring_themes) ? insights.recurring_themes : [],
-        people: Array.isArray(insights.people) ? insights.people : [],
-        bright_spots: Array.isArray(insights.bright_spots) ? insights.bright_spots : [],
-        hard_patterns: Array.isArray(insights.hard_patterns) ? insights.hard_patterns : [],
-        emotional_arc: insights.emotional_arc || "",
+        headline: insights.headline || fb.headline,
+        recurring_themes: list<Insights["recurring_themes"][number]>(insights.recurring_themes),
+        people: list<Insights["people"][number]>(insights.people),
+        bright_spots: list<string>(insights.bright_spots),
+        hard_patterns: list<string>(insights.hard_patterns),
+        emotional_arc: insights.emotional_arc || fb.emotional_arc,
         surprise: insights.surprise || "",
       };
     } catch (err) {
       console.error("get-insights: LLM failed", err);
-      return fallbackInsights(entries);
+      return fallbackInsights(entries.length);
     }
   });
 
 // ============================================================================
-// 7. seed (dev only — protected by a shared token)
+// 5. seed (demo life — optionally protected by a shared token)
 // ============================================================================
 
-interface SeedInput {
-  userId: string;
-  token?: string;
-}
-
 export const seedDemo = createServerFn({ method: "POST" })
-  .inputValidator((d: SeedInput) => d)
-  .handler(async ({ data }) => {
+  .inputValidator((d: { today: string; token?: string }) => ({
+    today: assertDate(d?.today),
+    token: typeof d?.token === "string" ? d.token : undefined,
+  }))
+  .handler(async ({ data }): Promise<{ entries: TimelineEntry[] }> => {
     const required = process.env.SEED_TOKEN;
     if (required && data.token !== required) {
       throw new Error("Unauthorized: bad seed token");
     }
-
-    await ensureTenantReady();
-    const today = serverToday();
-    const entries = generateSeedEntries(today);
-
-    // Write in batches so we don't send one enormous request.
-    const BATCH = 20;
-    let written = 0;
-    for (let i = 0; i < entries.length; i += BATCH) {
-      const slice = entries.slice(i, i + BATCH);
-      await addMemories(
-        data.userId,
-        slice.map((e) => ({
-          source_id: `entry_${data.userId}_${e.date}`,
-          text: encodeEntryText(e.text, e),
-          infer: false,
-          metadata: {
-            entry_date: e.date,
-            sentiment_label: e.sentiment_label,
-            sentiment_score: String(e.sentiment_score),
-            dominant_emotion: e.dominant_emotion,
-            emotions_json: JSON.stringify(e.emotions),
-          },
-        })),
-      );
-      written += slice.length;
-    }
-
-    // Memories are queued for ingestion (not instantly queryable). Wait until
-    // they're listable so the timeline / reveal are populated on return.
-    const deadline = Date.now() + 90_000;
-    let ingested = 0;
-    while (Date.now() < deadline) {
-      ingested = (await listMemories(data.userId)).length;
-      if (ingested >= written) break;
-      await new Promise((r) => setTimeout(r, 3000));
-    }
-
-    return { ok: true, written, ingested };
+    return { entries: generateSeedEntries(data.today) };
   });

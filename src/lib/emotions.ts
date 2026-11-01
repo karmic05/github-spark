@@ -122,11 +122,11 @@ export const LABEL_TEXT: Record<SentimentLabel, string> = {
  */
 export function moodColor(score: number, alpha = 1): string {
   const t = (clampValence(score) + 1) / 2; // 0..1, low -> high
-  // Interpolate hue from dusk blue (250) -> stone (75) -> amber (60).
+  // Interpolate indigo ink -> warm grey -> ochre.
   const stops: [number, [number, number, number]][] = [
-    [0, [0.62, 0.07, 255]], // L, C, H — muted blue
-    [0.5, [0.78, 0.025, 95]], // soft warm stone
-    [1, [0.8, 0.11, 67]], // warm amber
+    [0, [0.46, 0.13, 265]], // L, C, H - indigo ink
+    [0.5, [0.6, 0.03, 90]], // warm grey
+    [1, [0.72, 0.15, 62]], // ochre
   ];
   let lo = stops[0];
   let hi = stops[stops.length - 1];
@@ -142,16 +142,16 @@ export function moodColor(score: number, alpha = 1): string {
   const L = lo[1][0] + (hi[1][0] - lo[1][0]) * k;
   const C = lo[1][1] + (hi[1][1] - lo[1][1]) * k;
   const H = lo[1][2] + (hi[1][2] - lo[1][2]) * k;
-  return `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${H.toFixed(1)}${alpha < 1 ? ` / ${alpha}` : ""})`;
+  return `oklch(${L.toFixed(3)} ${C.toFixed(3)} ${(H % 360).toFixed(1)}${alpha < 1 ? ` / ${alpha}` : ""})`;
 }
 
-/** Calm per-window colors for the radar overlays (warm amber week ... grey quarter). */
+/** Per-window ink colors for the radar overlays. */
 export const WINDOW_COLORS: Record<WindowKey, string> = {
-  today: "oklch(0.7 0.13 25)", // soft terracotta
-  week: "oklch(0.78 0.12 67)", // warm amber
-  month: "oklch(0.68 0.07 200)", // muted teal
-  quarter: "oklch(0.6 0.02 260)", // soft grey
-  all: "oklch(0.58 0.08 300)", // soft mauve — the whole story
+  today: "oklch(0.58 0.2 34)", // vermilion
+  week: "oklch(0.72 0.15 75)", // ochre
+  month: "oklch(0.55 0.1 190)", // teal
+  quarter: "oklch(0.5 0.13 255)", // blue ink
+  all: "oklch(0.28 0.02 60)", // black ink - the whole story
 };
 
 export interface RadarRow {

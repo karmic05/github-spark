@@ -5,7 +5,6 @@ import { Flame } from "lucide-react";
 
 import { EmotionRadar } from "@/components/emotion-radar";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
 import {
   EMOTION_AXES,
   LABEL_TEXT,
@@ -17,7 +16,8 @@ import {
   type TimelineEntry,
 } from "@/lib/emotions";
 import { todayISO, useUser } from "@/lib/use-user";
-import { getOpener, getTimeline, submitEntry } from "@/functions/throughline";
+import { analyzeEntry, getOpener } from "@/functions/throughline";
+import { entryForDate, loadEntries, upsertEntry } from "@/lib/journal-store";
 
 export const Route = createFileRoute("/_app/today")({
   component: Today,
@@ -61,20 +61,29 @@ function Today() {
 
   const openerQ = useQuery({
     queryKey: ["opener", userId],
-    queryFn: () => getOpener({ data: { userId } }),
+    queryFn: () => getOpener({ data: { entries: loadEntries(userId).slice(-8) } }),
     staleTime: 60_000,
   });
 
   const timelineQ = useQuery({
     queryKey: ["timeline", userId],
-    queryFn: () => getTimeline({ data: { userId } }),
+    queryFn: async () => ({ entries: loadEntries(userId) }),
     staleTime: 30_000,
   });
 
   const streak = useMemo(() => computeStreak(timelineQ.data?.entries ?? []), [timelineQ.data]);
 
   const submit = useMutation({
-    mutationFn: () => submitEntry({ data: { userId, date: todayISO(), text: text.trim() } }),
+    mutationFn: async () => {
+      const date = todayISO();
+      // A second note on the same day joins the first, so a day is never overwritten.
+      const existing = entryForDate(userId, date);
+      const full = existing ? `${existing.text}\n\n${text.trim()}` : text.trim();
+      const analysis = await analyzeEntry({ data: { text: full } });
+      const { saved } = upsertEntry(userId, date, full, analysis);
+      if (!saved) throw new Error("storage");
+      return analysis;
+    },
     onSuccess: (analysis) => {
       setResult(analysis);
       setText("");
@@ -85,34 +94,43 @@ function Today() {
     },
   });
 
-  const greetingDate = new Date().toLocaleDateString(undefined, {
-    weekday: "long",
-    month: "long",
-    day: "numeric",
-  });
+  const now = new Date();
+  const weekday = now.toLocaleDateString(undefined, { weekday: "long" });
+  const monthYear = now.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+  const words = text.trim() ? text.trim().split(/\s+/).length : 0;
 
   const radarRows = result ? toRadarRows({ today: result.emotions }, ["today"]) : [];
+  const tone = result ? moodColor(result.sentiment_score) : "";
 
   return (
-    <main className="px-5 pt-10">
-      <header className="flex items-baseline justify-between">
-        <p className="text-xs uppercase tracking-[0.25em] text-muted-foreground">{greetingDate}</p>
+    <main className="px-5 pt-8">
+      {/* The date, set like a diary page. */}
+      <header className="flex items-end justify-between">
+        <div className="flex items-end gap-3">
+          <span className="display text-[4.25rem] leading-[0.8]">
+            {String(now.getDate()).padStart(2, "0")}
+          </span>
+          <div className="pb-1">
+            <p className="eyebrow !text-foreground">{weekday}</p>
+            <p className="eyebrow">{monthYear}</p>
+          </div>
+        </div>
         {streak > 0 && (
-          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-            <Flame className="h-3.5 w-3.5 text-primary" strokeWidth={1.75} />
+          <span className="inline-flex items-center gap-1.5 border border-foreground/25 px-2 py-1 font-mono text-xs">
+            <Flame className="h-3.5 w-3.5 text-vermilion" strokeWidth={1.75} />
             {streak} day{streak === 1 ? "" : "s"}
           </span>
         )}
       </header>
 
-      {/* The opener — visible proof of memory. */}
-      <section className="mt-6 min-h-[4.5rem]">
+      {/* The opener: visible proof of memory. */}
+      <section className="mt-7 min-h-[4.5rem] border-l-2 border-vermilion pl-4">
         {openerQ.isLoading ? (
-          <p className="prose-serif animate-pulse text-lg leading-relaxed text-muted-foreground">
+          <p className="prose-serif animate-pulse text-xl italic leading-snug text-muted-foreground">
             reading back through your entries…
           </p>
         ) : (
-          <p className="prose-serif animate-rise text-pretty text-xl leading-relaxed text-foreground">
+          <p className="prose-serif animate-rise text-pretty text-[1.4rem] italic leading-snug">
             {openerQ.data?.opener}
           </p>
         )}
@@ -120,46 +138,56 @@ function Today() {
 
       {!result ? (
         <section className="mt-6">
-          <Textarea
+          <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
             placeholder="A few sentences about today…"
-            className="prose-serif min-h-[40vh] resize-none rounded-2xl border-border/70 bg-card/60 p-5 text-lg leading-relaxed shadow-sm focus-visible:ring-primary/40"
+            className="ruled prose-serif sheet block min-h-[42vh] w-full resize-none outline-none transition-[border-color,box-shadow] duration-150 placeholder:italic placeholder:text-foreground/35 focus-visible:border-foreground/40 focus-visible:ring-2 focus-visible:ring-ring"
             aria-label="Today's entry"
           />
+          <p className="mt-2 font-mono text-[11px] text-muted-foreground tabular-nums">
+            {words > 0 ? `${words} word${words === 1 ? "" : "s"}` : "Private to this device."}
+          </p>
           <Button
             onClick={() => submit.mutate()}
             disabled={!text.trim() || submit.isPending}
-            className="mt-4 h-12 w-full rounded-xl text-base"
+            className="mt-4 h-12 w-full text-sm"
           >
             {submit.isPending ? "Saving…" : "Set it down"}
           </Button>
           {submit.isError && (
             <p className="mt-3 text-center text-sm text-destructive">
-              Something slipped — try once more.
+              {submit.error instanceof Error && submit.error.message === "storage"
+                ? "Couldn't save on this device — is browser storage blocked?"
+                : "Something slipped — try once more."}
             </p>
           )}
         </section>
       ) : (
-        <section className="mt-6 animate-rise">
-          {/* Gentle live reaction. */}
-          <div
-            className="rounded-2xl border border-border/70 p-5 shadow-sm"
-            style={{ background: moodColor(result.sentiment_score, 0.1) }}
-          >
-            <p className="prose-serif text-lg leading-relaxed text-foreground">
+        <section className="animate-rise mt-6">
+          {/* How the day read. */}
+          <div className="sheet p-5" style={{ borderLeft: `4px solid ${tone}` }}>
+            <span className="stamp" style={{ color: tone }}>
+              {LABEL_TEXT[result.sentiment_label]}
+            </span>
+            <p className="prose-serif mt-4 text-pretty text-[1.3rem] leading-snug">
               {result.reflection}
             </p>
+            {(result.themes.length > 0 || result.people.length > 0) && (
+              <p className="mt-4 font-mono text-xs text-muted-foreground">
+                {[...result.people, ...result.themes.map((t) => `#${t}`)].join("  ·  ")}
+              </p>
+            )}
           </div>
 
           {/* Today's emotion fingerprint. */}
-          <div className="mt-6 rounded-2xl border border-border/70 bg-card/50 p-4">
-            <h2 className="prose-serif text-center text-sm text-muted-foreground">
+          <div className="sheet mt-4 p-4">
+            <h2 className="prose-serif text-center text-sm italic text-muted-foreground">
               today's emotion fingerprint
             </h2>
             <EmotionRadar
               data={radarRows}
-              height={300}
+              height={290}
               series={[{ key: "today", label: "Today", color: WINDOW_COLORS.today }]}
             />
             <p className="px-2 pb-1 text-center text-sm leading-relaxed text-muted-foreground">
@@ -167,11 +195,7 @@ function Today() {
             </p>
           </div>
 
-          <Button
-            variant="ghost"
-            onClick={() => setResult(null)}
-            className="mt-4 w-full text-muted-foreground"
-          >
+          <Button variant="ghost" onClick={() => setResult(null)} className="mt-4 w-full">
             Add another note
           </Button>
         </section>

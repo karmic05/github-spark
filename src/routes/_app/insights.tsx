@@ -12,7 +12,8 @@ import {
   type WindowKey,
 } from "@/lib/emotions";
 import { cn } from "@/lib/utils";
-import { useUser } from "@/lib/use-user";
+import { loadEntries } from "@/lib/journal-store";
+import { todayISO, useUser } from "@/lib/use-user";
 import { getEmotionWindows, getInsights } from "@/functions/throughline";
 
 export const Route = createFileRoute("/_app/insights")({
@@ -26,28 +27,28 @@ function Insights() {
 
   const insightsQ = useQuery({
     queryKey: ["insights", userId],
-    queryFn: () => getInsights({ data: { userId } }),
+    queryFn: () => getInsights({ data: { entries: loadEntries(userId) } }),
     staleTime: 60_000,
   });
   const windowsQ = useQuery({
     queryKey: ["windows", userId],
-    queryFn: () => getEmotionWindows({ data: { userId } }),
+    queryFn: () =>
+      getEmotionWindows({ data: { entries: loadEntries(userId), today: todayISO() } }),
     staleTime: 60_000,
   });
 
-  // Cinematic beat: hold the "reading back…" frame until data is ready
-  // (and at least a moment, so the reveal feels composed, not abrupt).
+  // A short held beat so the reveal feels composed, not abrupt.
   const settled = !insightsQ.isLoading && !windowsQ.isLoading;
   useEffect(() => {
     if (!settled) return;
-    const t = setTimeout(() => setComposing(false), 1500);
+    const t = setTimeout(() => setComposing(false), 700);
     return () => clearTimeout(t);
   }, [settled]);
 
   if (composing) {
     return (
-      <main className="flex min-h-[80vh] flex-col items-center justify-center px-6 text-center">
-        <p className="prose-serif animate-pulse text-xl leading-relaxed text-muted-foreground">
+      <main className="flex min-h-[60vh] flex-col items-center justify-center px-6 text-center">
+        <p className="prose-serif animate-pulse text-2xl italic leading-relaxed text-muted-foreground">
           reading back through your entries…
         </p>
       </main>
@@ -58,15 +59,15 @@ function Insights() {
   const windows = windowsQ.data;
 
   let delay = 0;
-  const next = () => (delay += 0.18);
+  const next = () => (delay += 0.05);
 
   return (
-    <main className="px-5 pt-10">
-      <p className="text-xs uppercase tracking-[0.3em] text-muted-foreground">What I noticed</p>
+    <main className="px-5 pt-8">
+      <p className="eyebrow">What I noticed</p>
 
       {insights && (
         <h1
-          className="prose-serif mt-4 animate-rise text-pretty text-2xl leading-snug text-foreground"
+          className="display animate-rise mt-3 text-pretty text-[2.1rem] leading-[1.12]"
           style={{ animationDelay: `${next()}s` }}
         >
           {insights.headline}
@@ -75,20 +76,20 @@ function Insights() {
 
       {/* The spider-web map. */}
       {windows && (
-        <section className="mt-8 animate-rise" style={{ animationDelay: `${next()}s` }}>
+        <section className="animate-rise mt-8" style={{ animationDelay: `${next()}s` }}>
           <SpiderWeb windows={windows.windows} />
         </section>
       )}
 
       {insights && (
-        <div className="mt-10 space-y-8">
+        <div className="mt-10 space-y-9">
           {insights.recurring_themes.length > 0 && (
-            <Reveal title="Recurring themes" delay={next()}>
-              <ul className="space-y-2">
+            <Reveal n="01" title="Recurring themes" delay={next()}>
+              <ul className="space-y-3">
                 {insights.recurring_themes.map((t, i) => (
-                  <li key={i} className="text-sm leading-relaxed">
-                    <span className="prose-serif text-base text-foreground">{t.theme}.</span>{" "}
-                    <span className="text-muted-foreground">{t.note}</span>
+                  <li key={i} className="leading-relaxed">
+                    <span className="prose-serif text-lg font-medium">{t.theme}.</span>{" "}
+                    <span className="text-foreground/70">{t.note}</span>
                   </li>
                 ))}
               </ul>
@@ -96,12 +97,12 @@ function Insights() {
           )}
 
           {insights.people.length > 0 && (
-            <Reveal title="The people who matter" delay={next()}>
-              <ul className="space-y-2">
+            <Reveal n="02" title="The people who matter" delay={next()}>
+              <ul className="space-y-3">
                 {insights.people.map((p, i) => (
-                  <li key={i} className="text-sm leading-relaxed">
-                    <span className="prose-serif text-base text-foreground">{p.name}.</span>{" "}
-                    <span className="text-muted-foreground">{p.note}</span>
+                  <li key={i} className="leading-relaxed">
+                    <span className="prose-serif text-lg font-medium">{p.name}.</span>{" "}
+                    <span className="text-foreground/70">{p.note}</span>
                   </li>
                 ))}
               </ul>
@@ -109,10 +110,10 @@ function Insights() {
           )}
 
           {insights.bright_spots.length > 0 && (
-            <Reveal title="Bright spots" delay={next()}>
-              <ul className="space-y-1.5">
+            <Reveal n="03" title="Bright spots" delay={next()}>
+              <ul className="space-y-2">
                 {insights.bright_spots.map((b, i) => (
-                  <li key={i} className="prose-serif text-base leading-relaxed text-foreground">
+                  <li key={i} className="prose-serif border-l-2 border-chart-4 pl-3 text-lg leading-snug">
                     {b}
                   </li>
                 ))}
@@ -121,10 +122,13 @@ function Insights() {
           )}
 
           {insights.hard_patterns.length > 0 && (
-            <Reveal title="What the hard weeks share" delay={next()}>
-              <ul className="space-y-1.5">
+            <Reveal n="04" title="What the hard weeks share" delay={next()}>
+              <ul className="space-y-2">
                 {insights.hard_patterns.map((h, i) => (
-                  <li key={i} className="text-base leading-relaxed text-muted-foreground">
+                  <li
+                    key={i}
+                    className="border-l-2 border-chart-1 pl-3 text-lg leading-snug text-foreground/75"
+                  >
                     {h}
                   </li>
                 ))}
@@ -133,19 +137,16 @@ function Insights() {
           )}
 
           {insights.emotional_arc && (
-            <Reveal title="The arc" delay={next()}>
-              <p className="prose-serif text-pretty text-lg leading-relaxed text-foreground">
+            <Reveal n="05" title="The arc" delay={next()}>
+              <p className="prose-serif text-pretty text-xl leading-relaxed">
                 {insights.emotional_arc}
               </p>
             </Reveal>
           )}
 
           {insights.surprise && (
-            <Reveal title="One thing you might not see" delay={next()}>
-              <p
-                className="prose-serif text-pretty rounded-2xl border border-border/70 p-5 text-lg leading-relaxed text-foreground"
-                style={{ background: WINDOW_COLORS.today.replace(")", " / 0.08)") }}
-              >
+            <Reveal n="06" title="One thing you might not see" delay={next()}>
+              <p className="prose-serif sheet text-pretty p-5 text-xl italic leading-relaxed">
                 {insights.surprise}
               </p>
             </Reveal>
@@ -157,17 +158,20 @@ function Insights() {
 }
 
 function Reveal({
+  n,
   title,
   delay,
   children,
 }: {
+  n: string;
   title: string;
   delay: number;
   children: React.ReactNode;
 }) {
   return (
     <section className="animate-rise" style={{ animationDelay: `${delay}s` }}>
-      <h2 className="prose-serif mb-2 text-sm uppercase tracking-widest text-muted-foreground">
+      <h2 className="eyebrow mb-3 flex items-center gap-3 border-b border-foreground/15 pb-2">
+        <span className="text-vermilion">{n}</span>
         {title}
       </h2>
       {children}
@@ -214,8 +218,8 @@ function SpiderWeb({
   }
 
   return (
-    <div className="rounded-2xl border border-border/70 bg-card/50 p-4">
-      <h2 className="prose-serif text-center text-sm text-muted-foreground">
+    <div className="sheet p-4">
+      <h2 className="prose-serif text-center text-sm italic text-muted-foreground">
         the shape of your seasons
       </h2>
 
@@ -229,15 +233,18 @@ function SpiderWeb({
             <button
               key={k}
               onClick={() => toggle(k)}
+              aria-pressed={on}
               className={cn(
-                "inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs transition-colors",
+                "press inline-flex items-center gap-1.5 rounded-sm border px-2.5 py-1.5 font-mono text-xs",
                 on
-                  ? "border-transparent text-foreground"
-                  : "border-border text-muted-foreground opacity-60",
+                  ? "border-foreground bg-foreground text-primary-foreground"
+                  : "border-foreground/25 text-muted-foreground",
               )}
-              style={on ? { background: WINDOW_COLORS[k].replace(")", " / 0.18)") } : undefined}
             >
-              <span className="h-2 w-2 rounded-full" style={{ background: WINDOW_COLORS[k] }} />
+              <span
+                className="h-2 w-2"
+                style={{ background: WINDOW_COLORS[k], outline: on ? "1px solid var(--paper)" : "none" }}
+              />
               {WINDOW_LABELS[k]}
             </button>
           );
@@ -245,16 +252,14 @@ function SpiderWeb({
       </div>
 
       {/* Per-window judgements */}
-      <div className="mt-4 grid gap-2">
+      <div className="mt-5 divide-y divide-foreground/15 border-y border-foreground/15">
         {available.map((k) => (
-          <div key={k} className="rounded-xl border border-border/60 bg-background/40 p-3">
+          <div key={k} className="py-3">
             <div className="flex items-center gap-2">
-              <span className="h-2.5 w-2.5 rounded-full" style={{ background: WINDOW_COLORS[k] }} />
-              <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                {WINDOW_LABELS[k]}
-              </span>
+              <span className="h-2.5 w-2.5" style={{ background: WINDOW_COLORS[k] }} />
+              <span className="eyebrow">{WINDOW_LABELS[k]}</span>
             </div>
-            <p className="mt-1.5 text-sm leading-relaxed text-foreground">
+            <p className="prose-serif mt-1.5 text-pretty text-[1.05rem] leading-snug">
               {windows[k].judgement || "—"}
             </p>
           </div>

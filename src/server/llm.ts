@@ -1,18 +1,14 @@
-// LLM abstraction. All model calls live server-side. Three providers are
+// LLM abstraction. All model calls live server-side. Two providers are
 // supported so the same code runs anywhere:
 //
-//   1. Nebius AI Studio (NEBIUS_API_KEY)     — OpenAI-compatible. Preferred.
-//   2. Lovable AI Gateway (LOVABLE_API_KEY)  — auto-provisioned on Lovable.
-//   3. Anthropic (ANTHROPIC_API_KEY)         — Claude Opus 4.8, Messages API.
+//   1. Nebius AI Studio (NEBIUS_API_KEY) - OpenAI-compatible. Preferred.
+//   2. Anthropic (ANTHROPIC_API_KEY)     - Claude, Messages API.
 //
-// All are called over plain fetch (no SDK dependency). The first key present
-// wins (Nebius → Lovable → Anthropic). Callers handle parse/throw fallbacks.
+// Both are called over plain fetch (no SDK dependency). The first key present
+// wins (Nebius, then Anthropic). Callers handle parse/throw fallbacks.
 
 const NEBIUS_URL =
   process.env.NEBIUS_BASE_URL || "https://api.studio.nebius.com/v1/chat/completions";
-
-const LOVABLE_URL =
-  process.env.LOVABLE_AI_URL || "https://ai.gateway.lovable.dev/v1/chat/completions";
 
 const ANTHROPIC_URL = process.env.ANTHROPIC_BASE_URL || "https://api.anthropic.com/v1/messages";
 
@@ -27,21 +23,18 @@ export interface LLMOptions {
 }
 
 export function llmConfigured(): boolean {
-  return Boolean(
-    process.env.NEBIUS_API_KEY || process.env.LOVABLE_API_KEY || process.env.ANTHROPIC_API_KEY,
-  );
+  return Boolean(process.env.NEBIUS_API_KEY || process.env.ANTHROPIC_API_KEY);
 }
 
 export async function callLLM(opts: LLMOptions): Promise<string> {
   if (process.env.NEBIUS_API_KEY) return callNebius(opts);
-  if (process.env.LOVABLE_API_KEY) return callLovable(opts);
   if (process.env.ANTHROPIC_API_KEY) return callAnthropic(opts);
   throw new Error(
-    "No LLM key configured. Set NEBIUS_API_KEY, LOVABLE_API_KEY, or ANTHROPIC_API_KEY.",
+    "No LLM key configured. Set NEBIUS_API_KEY or ANTHROPIC_API_KEY.",
   );
 }
 
-// Shared path for OpenAI-compatible chat-completions APIs (Nebius + Lovable).
+// Shared path for OpenAI-compatible chat-completions APIs (Nebius).
 async function callOpenAICompatible(
   opts: LLMOptions,
   cfg: { url: string; key: string; model: string; provider: string },
@@ -80,17 +73,8 @@ function callNebius(opts: LLMOptions): Promise<string> {
   return callOpenAICompatible(opts, {
     url: NEBIUS_URL,
     key: process.env.NEBIUS_API_KEY ?? "",
-    model: process.env.NEBIUS_MODEL || "meta-llama/Llama-3.3-70B-Instruct",
+    model: process.env.NEBIUS_MODEL || "Qwen/Qwen3-235B-A22B-Instruct-2507",
     provider: "Nebius",
-  });
-}
-
-function callLovable(opts: LLMOptions): Promise<string> {
-  return callOpenAICompatible(opts, {
-    url: LOVABLE_URL,
-    key: process.env.LOVABLE_API_KEY ?? "",
-    model: process.env.LOVABLE_AI_MODEL || "google/gemini-2.5-flash",
-    provider: "Lovable AI",
   });
 }
 
