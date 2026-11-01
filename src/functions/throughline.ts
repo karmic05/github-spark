@@ -153,7 +153,7 @@ const analysisMemo = new Map<string, EntryAnalysis>();
 const MEMO_MAX = 200;
 
 export const analyzeEntry = createServerFn({ method: "POST" })
-  .inputValidator((d: { text: string }) => {
+  .validator((d: { text: string }) => {
     const text = typeof d?.text === "string" ? d.text.trim().slice(0, MAX_ENTRY_CHARS) : "";
     if (!text) throw new Error("Entry is empty");
     return { text };
@@ -189,7 +189,7 @@ const FIRST_TIME_OPENER =
   "This is a blank page and a private one. Tell me a little about today — a few sentences is plenty.";
 
 export const getOpener = createServerFn({ method: "POST" })
-  .inputValidator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
+  .validator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
   .handler(async ({ data }) => {
     const recent = data.entries.filter((e) => e.text.trim()).slice(-8);
     if (recent.length === 0 || !llmConfigured()) {
@@ -258,7 +258,7 @@ function fallbackJudgement(w: { emotions: EmotionVector; valence: number; count:
 }
 
 export const getEmotionWindows = createServerFn({ method: "POST" })
-  .inputValidator((d: { entries: unknown; today: string }) => ({
+  .validator((d: { entries: unknown; today: string }) => ({
     entries: validateEntries(d?.entries),
     today: assertDate(d?.today),
   }))
@@ -366,7 +366,7 @@ function fallbackInsights(entryCount: number): Insights {
 }
 
 export const getInsights = createServerFn({ method: "POST" })
-  .inputValidator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
+  .validator((d: { entries: unknown }) => ({ entries: validateEntries(d?.entries) }))
   .handler(async ({ data }): Promise<Insights> => {
     const entries = data.entries;
 
@@ -426,7 +426,7 @@ Return ONLY JSON in this exact shape:
 // ============================================================================
 
 export const seedDemo = createServerFn({ method: "POST" })
-  .inputValidator((d: { today: string; token?: string }) => ({
+  .validator((d: { today: string; token?: string }) => ({
     today: assertDate(d?.today),
     token: typeof d?.token === "string" ? d.token : undefined,
   }))
